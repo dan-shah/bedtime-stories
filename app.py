@@ -7,6 +7,7 @@ import soundfile as sf
 import tempfile
 import numpy as np
 import base64
+import time
 from typing import Optional
 from dotenv import load_dotenv
 from elevenlabs import ElevenLabs
@@ -86,15 +87,19 @@ def text_to_speech(client: ElevenLabs, text: str, voice_id: str = "pNInz6obpgDQG
         st.error(f"Error generating speech: {str(e)}")
         return None
 
-def create_audio_player(audio_bytes: bytes) -> str:
-    """Create an HTML audio player for the generated speech."""
+def create_audio_player(audio_bytes: bytes, voice_name: str = "") -> str:
+    """Create a simple HTML audio player."""
     b64 = base64.b64encode(audio_bytes).decode()
-    html = f"""
-    <audio controls autoplay>
-        <source src="data:audio/mpeg;base64,{b64}" type="audio/mpeg">
-        Your browser does not support the audio element.
-    </audio>
-    """
+    
+    html = f'''
+    <div style="margin: 20px 0;">
+        <h4>🎧 {voice_name}</h4>
+        <audio controls style="width: 100%;">
+            <source src="data:audio/mpeg;base64,{b64}" type="audio/mpeg">
+            Your browser does not support the audio element.
+        </audio>
+    </div>
+    '''
     return html
 
 def generate_story(client: anthropic.Anthropic, prompt: str, child_name: str = "", theme: str = "") -> str:
@@ -160,7 +165,8 @@ def main():
                     ("Bella - Gentle Female", "EXAVITQu4vr4xnSDxMaL"),
                     ("Rachel - Storyteller", "21m00Tcm4TlvDq8ikWAM"),
                     ("Antoni - Deep Male", "ErXwobaYiN019PkySvjV"),
-                    ("Domi - Cheerful Female", "AZnzlk1XvdvUeBnXmlld")
+                    ("Domi - Cheerful Female", "AZnzlk1XvdvUeBnXmlld"),
+                    ("Demon Monster", "vfaqCOvlrKi4Zp7C2IAm")
                 ],
                 format_func=lambda x: x[0]
             )
@@ -266,7 +272,10 @@ def main():
         
         st.markdown("---")
         st.subheader("🌙 Your Bedtime Story")
-        st.markdown(story)
+        
+        # Show story text if no audio generated yet
+        if "story_audio" not in st.session_state or not st.session_state.story_audio:
+            st.markdown(story)
         
         # Voice controls section
         if elevenlabs_client:
@@ -288,9 +297,13 @@ def main():
             # Display all generated audio versions
             if "story_audio" in st.session_state and st.session_state.story_audio:
                 st.markdown("### 🔊 Available Audio Versions")
+                
+                # Show audio players
                 for voice_id, audio_data in st.session_state.story_audio.items():
-                    st.markdown(f"**{audio_data['voice_name']}**")
-                    audio_html = create_audio_player(audio_data["audio"])
+                    audio_html = create_audio_player(
+                        audio_data["audio"], 
+                        audio_data['voice_name']
+                    )
                     st.markdown(audio_html, unsafe_allow_html=True)
                     
                     # Download button for each voice
@@ -302,20 +315,71 @@ def main():
                         key=f"download_{voice_id}"
                     )
                     st.markdown("---")
-            
-            # Add some styling to make it feel more story-like
-            st.markdown("""
-            <style>
-            .story-text {
-                font-size: 1.1em;
-                line-height: 1.6;
-                padding: 20px;
-                background-color: #f8f9fa;
-                border-radius: 10px;
-                margin: 20px 0;
-            }
-            </style>
-            """, unsafe_allow_html=True)
+                
+                # Interactive highlighting demonstration
+                st.subheader("🎯 Interactive Read-Along")
+                
+                if st.button("▶️ Start Read-Along Demo (3 seconds per sentence)"):
+                    # Split story into sentences for the demo
+                    import re
+                    sentences = re.split(r'(?<=[.!?])\s+', story.strip())
+                    sentences = [s.strip() for s in sentences if s.strip()]
+                    
+                    # Create a placeholder for the highlighted story
+                    story_placeholder = st.empty()
+                    
+                    for i, sentence in enumerate(sentences):
+                        # Create highlighted version
+                        highlighted_story = ""
+                        for j, sent in enumerate(sentences):
+                            if j < i:
+                                # Completed sentences - green background
+                                highlighted_story += f'<span style="background-color: #c8e6c9; padding: 2px 4px; border-radius: 3px; opacity: 0.8;">{sent}</span> '
+                            elif j == i:
+                                # Current sentence - yellow highlight
+                                highlighted_story += f'<span style="background-color: #ffeb3b; padding: 2px 4px; border-radius: 3px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">{sent}</span> '
+                            else:
+                                # Future sentences - normal
+                                highlighted_story += f'<span style="padding: 2px 4px;">{sent}</span> '
+                        
+                        # Update the story display
+                        story_placeholder.markdown(f'''
+                        <div style="
+                            margin-top: 20px; 
+                            padding: 20px; 
+                            background-color: #f8f9fa; 
+                            border-radius: 10px;
+                            font-size: 1.1em;
+                            line-height: 1.8;
+                            border-left: 4px solid #007acc;
+                        ">
+                            {highlighted_story}
+                        </div>
+                        ''', unsafe_allow_html=True)
+                        
+                        # Wait 3 seconds before next sentence
+                        time.sleep(3)
+                    
+                    # Final state - all completed
+                    final_story = ""
+                    for sent in sentences:
+                        final_story += f'<span style="background-color: #c8e6c9; padding: 2px 4px; border-radius: 3px; opacity: 0.8;">{sent}</span> '
+                    
+                    story_placeholder.markdown(f'''
+                    <div style="
+                        margin-top: 20px; 
+                        padding: 20px; 
+                        background-color: #f8f9fa; 
+                        border-radius: 10px;
+                        font-size: 1.1em;
+                        line-height: 1.8;
+                        border-left: 4px solid #007acc;
+                    ">
+                        {final_story}
+                    </div>
+                    ''', unsafe_allow_html=True)
+                    
+                    st.success("✅ Read-along complete! Perfect for following along with the audio.")
     
     elif generate_button:
         st.warning("Please enter a story idea first!")
