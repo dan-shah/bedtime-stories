@@ -50,3 +50,12 @@ Thumbs.db
 *.tmp
 temp/
 tmp/
+
+# Claude-related files
+.claude/
+
+# Test files
+test_app.py
+
+# Development documentation
+development_plan.txt
