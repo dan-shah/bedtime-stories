@@ -1,0 +1,42 @@
+Bedtime Story App Development Plan
+========================================
+
+## Overview
+Create an interactive bedtime story app for a 6-year-old that generates creative 3-4 minute stories using AI.
+
+## Phase 1: Basic Streamlit Text App
+- Create a simple Streamlit interface with text input
+- Integrate Anthropic's Claude API for story generation
+- Add prompts optimized for 3-4 minute bedtime stories
+- Include story customization options (character names, themes)
+
+## Phase 2: Speech-to-Text Integration
+- Add OpenAI Whisper for voice input
+- Create microphone recording functionality
+- Convert speech to text for story prompts
+- Add fallback to text input if speech fails
+
+## Phase 3: Text-to-Speech Output
+- Integrate ElevenLabs API for story narration
+- Add multiple voice options for variety
+- Include playback controls (pause, replay)
+- Store generated audio for offline listening
+
+## Phase 4: Polish & Features
+- Add voice selection for different characters
+- Create story history/favorites
+- Add bedtime-appropriate content filtering
+- Include gentle background music options
+
+## Technical Requirements
+- Streamlit for web interface
+- Anthropic Claude API for story generation
+- OpenAI Whisper for speech-to-text
+- ElevenLabs API for text-to-speech
+- Python environment with necessary dependencies
+
+## Target User
+6-year-old child with parent assistance for setup and initial prompts.
+
+## Story Length
+3-4 minutes of reading time (approximately 400-600 words).
