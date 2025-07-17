@@ -8,12 +8,50 @@ import tempfile
 import numpy as np
 import base64
 import time
+import random
 from typing import Optional
 from dotenv import load_dotenv
 from elevenlabs import ElevenLabs
 
 # Load environment variables
 load_dotenv()
+
+def retry_with_backoff(func, max_retries=3, base_delay=1, max_delay=60, backoff_factor=2):
+    """
+    Retry function with exponential backoff for handling API rate limits and temporary errors.
+    
+    Args:
+        func: Function to retry
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay in seconds
+        max_delay: Maximum delay in seconds
+        backoff_factor: Multiplier for delay on each retry
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except Exception as e:
+            error_str = str(e)
+            
+            # Check if this is a retryable error
+            if any(error_type in error_str.lower() for error_type in [
+                'overloaded', 'rate limit', 'timeout', '429', '500', '502', '503', '504'
+            ]):
+                if attempt < max_retries:
+                    # Calculate delay with jitter
+                    delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+                    jitter = random.uniform(0.1, 0.3) * delay
+                    total_delay = delay + jitter
+                    
+                    st.warning(f"API temporarily overloaded. Retrying in {total_delay:.1f} seconds... (Attempt {attempt + 1}/{max_retries + 1})")
+                    time.sleep(total_delay)
+                    continue
+                else:
+                    st.error(f"API still overloaded after {max_retries} retries. Please try again later.")
+                    raise e
+            else:
+                # Non-retryable error, raise immediately
+                raise e
 
 # Configure the page
 st.set_page_config(
@@ -70,6 +108,69 @@ def transcribe_audio(client: openai.OpenAI, audio_data, sample_rate):
     except Exception as e:
         return f"Error transcribing audio: {str(e)}"
 
+def generate_story_images(client: openai.OpenAI, story: str, story_prompt: str, child_name: str = "", model: str = "dall-e-2") -> tuple[Optional[str], Optional[str]]:
+    """Generate two images for the story using DALL-E - one for each half."""
+    try:
+        # Split story into two halves
+        sentences = story.split('. ')
+        mid_point = len(sentences) // 2
+        first_half = '. '.join(sentences[:mid_point])
+        second_half = '. '.join(sentences[mid_point:])
+        
+        # Create child-friendly, illustration-style prompts with explicit no-text instructions
+        base_style = "Children's book illustration style, soft colors, whimsical, gentle, appropriate for bedtime stories. NO TEXT, NO WORDS, NO LETTERS, NO WRITING in the image. Pure illustration only"
+        
+        # Generate prompts for each half
+        first_prompt = f"{base_style}. Visual scene showing: {story_prompt}"
+        if child_name:
+            first_prompt += f" with a child character"
+        first_prompt += f". Beginning scene: {first_half[:150]}... NO TEXT OR WORDS in image"
+        
+        second_prompt = f"{base_style}. Visual scene showing: {story_prompt}"
+        if child_name:
+            second_prompt += f" with a child character"
+        second_prompt += f". Ending scene: {second_half[:150]}... NO TEXT OR WORDS in image"
+        
+        # Generate first image with retry logic
+        def _generate_first_image():
+            # Set quality parameter only for DALL-E 3
+            kwargs = {
+                "model": model,
+                "prompt": first_prompt,
+                "size": "1024x1024",
+                "n": 1,
+            }
+            if model == "dall-e-3":
+                kwargs["quality"] = "standard"
+            
+            response = client.images.generate(**kwargs)
+            return response.data[0].url
+        
+        first_image_url = retry_with_backoff(_generate_first_image)
+        
+        # Generate second image with retry logic
+        def _generate_second_image():
+            # Set quality parameter only for DALL-E 3
+            kwargs = {
+                "model": model,
+                "prompt": second_prompt,
+                "size": "1024x1024",
+                "n": 1,
+            }
+            if model == "dall-e-3":
+                kwargs["quality"] = "standard"
+            
+            response = client.images.generate(**kwargs)
+            return response.data[0].url
+        
+        second_image_url = retry_with_backoff(_generate_second_image)
+        
+        return first_image_url, second_image_url
+        
+    except Exception as e:
+        st.error(f"Error generating images: {str(e)}")
+        return None, None
+
 def text_to_speech(client: ElevenLabs, text: str, voice_id: str = "pNInz6obpgDQGcFmaJgB") -> Optional[bytes]:
     """Convert text to speech using ElevenLabs."""
     try:
@@ -118,7 +219,7 @@ Story idea: {prompt}
 
 Please write a complete story with a clear beginning, middle, and end. Make it warm and soothing for bedtime."""
 
-    try:
+    def _generate_story():
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
@@ -126,6 +227,9 @@ Please write a complete story with a clear beginning, middle, and end. Make it w
             messages=[{"role": "user", "content": story_prompt}]
         )
         return message.content[0].text
+    
+    try:
+        return retry_with_backoff(_generate_story)
     except Exception as e:
         return f"Error generating story: {str(e)}"
 
@@ -177,6 +281,26 @@ def main():
             st.info("💡 Add your ElevenLabs API key to enable voice narration!")
             enable_narration = False
             selected_voice_id = None
+        
+        # Image generation settings
+        if openai_client:
+            st.markdown("---")
+            st.header("🎨 Image Settings")
+            enable_images = st.checkbox("🖼️ Generate Story Illustrations", value=True)
+            if enable_images:
+                dalle_model = st.selectbox(
+                    "Image Model",
+                    ["dall-e-2", "dall-e-3"],
+                    index=0,
+                    help="DALL-E 2 tends to avoid text in images, DALL-E 3 has higher quality but may include unwanted text"
+                )
+                st.info("💡 Two illustrations will be generated: one for the beginning and one for the end of the story")
+            else:
+                dalle_model = "dall-e-2"
+        else:
+            st.info("💡 Add your OpenAI API key to enable story illustrations!")
+            enable_images = False
+            dalle_model = "dall-e-2"
         
         st.markdown("---")
         st.markdown("### How to use:")
@@ -241,6 +365,8 @@ def main():
                     del st.session_state.story_audio
                 if "story_metadata" in st.session_state:
                     del st.session_state.story_metadata
+                if "story_images" in st.session_state:
+                    del st.session_state.story_images
     
     with col2:
         st.subheader("Story Examples")
@@ -265,6 +391,18 @@ def main():
                 "child_name": child_name,
                 "theme": theme
             }
+            
+            # Generate story images if enabled
+            if enable_images and openai_client:
+                with st.spinner("🎨 Creating beautiful illustrations for your story..."):
+                    first_image_url, second_image_url = generate_story_images(
+                        openai_client, story, prompt, child_name, dalle_model
+                    )
+                    if first_image_url and second_image_url:
+                        st.session_state.story_images = {
+                            "first_image": first_image_url,
+                            "second_image": second_image_url
+                        }
     
     # Display story if it exists
     if "generated_story" in st.session_state:
@@ -273,9 +411,59 @@ def main():
         st.markdown("---")
         st.subheader("🌙 Your Bedtime Story")
         
-        # Show story text if no audio generated yet
+        # Show story text with images integrated if no audio generated yet
         if "story_audio" not in st.session_state or not st.session_state.story_audio:
-            st.markdown(story)
+            if "story_images" in st.session_state:
+                # Split story into sentences for better image placement
+                sentences = story.split('. ')
+                sentences = [s.strip() + '.' if not s.endswith('.') else s.strip() for s in sentences if s.strip()]
+                
+                # Calculate midpoint for image placement
+                mid_point = len(sentences) // 2
+                
+                # First half of story
+                first_half = ' '.join(sentences[:mid_point])
+                second_half = ' '.join(sentences[mid_point:])
+                
+                # Display first half
+                st.markdown(first_half)
+                
+                # Display middle image
+                st.markdown("---")
+                st.markdown("### 🎨 Illustration")
+                st.image(st.session_state.story_images["first_image"], use_column_width=True)
+                st.markdown("---")
+                
+                # Display second half
+                st.markdown(second_half)
+                
+                # Display ending image
+                st.markdown("---")
+                st.markdown("### 🌙 The End")
+                st.image(st.session_state.story_images["second_image"], use_column_width=True)
+                st.markdown("---")
+            else:
+                # No images, show story normally
+                st.markdown(story)
+        
+        # Image generation controls for existing stories
+        if openai_client and "story_images" not in st.session_state:
+            st.markdown("### 🎨 Image Controls")
+            if st.button("🖼️ Generate Illustrations for This Story"):
+                metadata = st.session_state.get("story_metadata", {})
+                with st.spinner("🎨 Creating beautiful illustrations for your story..."):
+                    first_image_url, second_image_url = generate_story_images(
+                        openai_client, story, 
+                        metadata.get("prompt", ""), 
+                        metadata.get("child_name", ""),
+                        "dall-e-2"  # Default to DALL-E 2 for manual generation
+                    )
+                    if first_image_url and second_image_url:
+                        st.session_state.story_images = {
+                            "first_image": first_image_url,
+                            "second_image": second_image_url
+                        }
+                        st.rerun()
         
         # Voice controls section
         if elevenlabs_client:
@@ -320,6 +508,10 @@ def main():
                 st.subheader("🎯 Interactive Read-Along")
                 
                 if st.button("▶️ Start Read-Along Demo (3 seconds per sentence)"):
+                    # Note: Read-along feature works best without images for now
+                    if "story_images" in st.session_state:
+                        st.info("💡 Read-along demo works best when images are not displayed. Clear the story and regenerate without images for the full read-along experience.")
+                    
                     # Split story into sentences for the demo
                     import re
                     sentences = re.split(r'(?<=[.!?])\s+', story.strip())
