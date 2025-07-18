@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  bedtime-stories:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      # Optional: mount for persistent data if needed
+      - ./data:/app/data
+    networks:
+      - bedtime-stories-network
+
+networks:
+  bedtime-stories-network:
+    driver: bridge
